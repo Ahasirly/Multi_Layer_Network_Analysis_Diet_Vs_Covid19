@@ -4,6 +4,12 @@ library(igraph)
 library(scales)
 library(readr)
 
+# === Plot output setup ===
+dir.create("Plots", showWarnings = FALSE)
+plot_file <- file.path("Plots", "1_network_analysis.pdf")
+pdf(plot_file, width = 10, height = 8, onefile = TRUE)
+on.exit(dev.off(), add = TRUE)
+
 # === 导入数据 ===
 data <- read_csv("data/Food_Supply_kcal_Data.csv")
 

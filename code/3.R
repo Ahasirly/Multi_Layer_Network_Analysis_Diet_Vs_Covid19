@@ -7,8 +7,14 @@ library(igraph)
 library(ggraph)
 library(scales)
 
+# === Plot output setup ===
+dir.create("Plots", showWarnings = FALSE)
+plot_file <- file.path("Plots", "3_clustering_visualizations.pdf")
+pdf(plot_file, width = 10, height = 8, onefile = TRUE)
+on.exit(dev.off(), add = TRUE)
+
 # === 1. 读入数据 ===
-data <- read.csv("C:/Users/grizz/Downloads/archive (3)/Food_Supply_kcal_Data.csv", check.names = FALSE)
+data <- read.csv("data/Food_Supply_kcal_Data.csv", check.names = FALSE)
 
 # === 2. 提取食物相关列（去掉健康和疫情变量） ===
 food_cols <- c("Alcoholic Beverages","Animal Products","Animal fats","Aquatic Products, Other",

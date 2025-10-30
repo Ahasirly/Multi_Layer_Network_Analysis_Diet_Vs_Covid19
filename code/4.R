@@ -7,15 +7,20 @@ library(igraph)
 library(ggraph)
 library(scales)
 
+# === Plot output setup ===
+dir.create("Plots", showWarnings = FALSE)
+plot_file <- file.path("Plots", "4_low_covid_food_network.pdf")
+pdf(plot_file, width = 10, height = 8, onefile = TRUE)
+on.exit(dev.off(), add = TRUE)
+
 # === 1. 读取四个表 ===
-file_path <- "C:/Users/grizz/Downloads/archive (3)/"
 files <- c("Food_Supply_kcal_Data.csv",
            "Fat_Supply_Quantity_Data.csv",
            "Food_Supply_Quantity_kg_Data.csv",
            "Protein_Supply_Quantity_Data.csv")
 
 data_list <- lapply(files, function(f) {
-  read.csv(paste0(file_path, f), check.names = FALSE)
+  read.csv(file.path("data", f), check.names = FALSE)
 })
 names(data_list) <- c("kcal", "fat", "kg", "protein")
 

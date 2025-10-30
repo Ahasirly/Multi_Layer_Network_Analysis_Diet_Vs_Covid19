@@ -3,11 +3,17 @@
 # =============================================
 
 library(tidyverse)
-  library(igraph)
+library(igraph)
 library(ggraph)
 
+# === Plot output setup ===
+dir.create("Plots", showWarnings = FALSE)
+plot_file <- file.path("Plots", "2_food_covid_networks.pdf")
+pdf(plot_file, width = 10, height = 8, onefile = TRUE)
+on.exit(dev.off(), add = TRUE)
+
 # === 读入数据 ===
-data <- read.csv("C:/Users/grizz/Downloads/archive (3)/Food_Supply_kcal_Data.csv", check.names = FALSE)
+data <- read.csv("data/Food_Supply_kcal_Data.csv", check.names = FALSE)
 
 # === 选出食物类列和目标列 ===
 valid_food_cols <- c("Alcoholic Beverages","Animal Products","Animal fats","Aquatic Products, Other",
