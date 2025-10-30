@@ -1,4 +1,4 @@
-# === 安装与加载必要包 ===
+# === Load required packages ===
 library(tidyverse)
 library(igraph)
 library(scales)
@@ -10,10 +10,10 @@ plot_file <- file.path("Plots", "1_network_analysis.pdf")
 pdf(plot_file, width = 10, height = 8, onefile = TRUE)
 on.exit(dev.off(), add = TRUE)
 
-# === 导入数据 ===
+# === Load data ===
 data <- read_csv("data/Food_Supply_kcal_Data.csv")
 
-# === 数据预处理 ===
+# === Prepare numeric matrix for similarity analysis ===
 numeric_data <- data %>%
   select(-`Unit (all except Population)`, -Population, -Obesity, -Undernourished,
          -Confirmed, -Deaths, -Recovered, -Active) %>%
@@ -23,7 +23,7 @@ mat <- as.matrix(numeric_data)
 mat_norm <- scale(mat)
 
 # =============================
-# ① 基于皮尔逊相关系数的网络
+# 1. Network based on Pearson correlations
 # =============================
 sim_cor <- cor(t(mat_norm))
 threshold_cor <- 0.6
@@ -35,13 +35,13 @@ deg <- degree(g)
 btw <- betweenness(g)
 comm <- cluster_louvain(g)
 
-cat("==== 基于皮尔逊相关的网络 ====\n")
-cat("平均度数：", mean(deg), "\n")
-cat("社区数量：", length(unique(membership(comm))), "\n")
-cat("中介性最高的10个国家：\n")
+cat("==== Network based on Pearson correlations ====\n")
+cat("Average degree: ", mean(deg), "\n")
+cat("Number of communities: ", length(unique(membership(comm))), "\n")
+cat("Top 10 countries by betweenness:\n")
 print(sort(btw, decreasing = TRUE)[1:10])
 
-# --- 可视化 ---
+# --- Visualise network ---
 plot(
   g,
   vertex.size = rescale(deg, to = c(5, 15)),
@@ -51,21 +51,21 @@ plot(
   main = "Global Dietary Network (Pearson similarity > 0.6)"
 )
 
-# --- 输出每个社区的国家名称 ---
+# --- Report countries in each community ---
 country_clusters <- data.frame(
   Country = names(membership(comm)),
   Community = membership(comm)
 )
 
-cat("\n各社区国家（皮尔逊相似度网络）：\n")
+cat("\nCountries by community (Pearson similarity network):\n")
 for (c in sort(unique(country_clusters$Community))) {
-  cat(paste0("\n【社区 ", c, "】\n"))
+  cat(paste0("\n[Community ", c, "]\n"))
   cat(paste(country_clusters$Country[country_clusters$Community == c], collapse = ", "))
   cat("\n")
 }
 
 # =============================
-# ② 合并肥胖率和营养不良率信息
+# 2. Attach obesity and undernourishment data
 # =============================
 obesity_data <- data %>%
   select(Country, Obesity, Undernourished) %>%
@@ -78,7 +78,7 @@ country_clusters_clean <- country_clusters %>%
   left_join(obesity_data, by = "Country")
 
 # =============================
-# ③ 前5个社区的健康对比分析
+# 3. Compare health indicators in the first five communities
 # =============================
 top5_clusters <- sort(unique(country_clusters_clean$Community))[1:5]
 
@@ -92,10 +92,10 @@ community_health <- country_clusters_clean %>%
   ) %>%
   arrange(Community)
 
-cat("\n===== 前5个社区的健康指标对比 =====\n")
+cat("\n===== Health indicators for the first five communities =====\n")
 print(community_health)
 
-# --- 可视化 ---
+# --- Visualise health comparison ---
 community_health_long <- community_health %>%
   pivot_longer(cols = c(mean_obesity, mean_undernourished),
                names_to = "metric", values_to = "value") %>%
@@ -117,7 +117,7 @@ ggplot(community_health_long, aes(x = factor(Community), y = value, fill = metri
   ylim(0, max(community_health_long$value, na.rm = TRUE) * 1.2)
 
 # =============================
-# ④ 新冠指标分析（原数据单位为 % → 转换为每百人）
+# 4. COVID-19 indicator analysis (convert percentages to per-100 rates)
 # =============================
 covid_cols <- c("Country", "Confirmed", "Deaths", "Recovered", "Active", "Population")
 
@@ -125,19 +125,19 @@ covid_data <- data %>%
   select(all_of(covid_cols)) %>%
   mutate(across(c(Confirmed, Deaths, Recovered, Active), as.numeric))
 
-# 检查单位
+# Determine whether percentage units are present
 if ("% " %in% unique(trimws(data$`Unit (all except Population)`)) ||
     "%" %in% unique(trimws(data$`Unit (all except Population)`))) {
-  cat("检测到单位为 % —— 转换为每百人指标。\n")
+  cat("Detected percentage units: treating values as per-100 population metrics.\n")
   covid_data <- covid_data %>%
     mutate(
-      infection_rate = Confirmed,   # 百分比即每百人
+      infection_rate = Confirmed,   # percentages already represent per 100 people
       death_rate = Deaths,
       recovery_rate = Recovered,
       active_rate = Active
     )
 } else {
-  cat("未检测到百分比单位 —— 按病例数/人口计算。\n")
+  cat("No percentage units detected: computing rates per 100 people using population.\n")
   covid_data <- covid_data %>%
     mutate(across(c(Population), as.numeric)) %>%
     mutate(
@@ -148,7 +148,7 @@ if ("% " %in% unique(trimws(data$`Unit (all except Population)`)) ||
     )
 }
 
-# 合并社区信息
+# Merge community information with COVID metrics
 covid_merged <- covid_data %>%
   left_join(country_clusters_clean %>% select(Country, Community), by = "Country")
 
@@ -166,10 +166,10 @@ covid_by_comm <- covid_merged %>%
   ) %>%
   arrange(Community)
 
-cat("\n===== 前5个社区的新冠疫情指标对比（每百人） =====\n")
+cat("\n===== COVID-19 indicators for the first five communities (per 100 people) =====\n")
 print(covid_by_comm)
 
-# === 可视化 ===
+# === Visualise COVID comparison ===
 covid_long <- covid_by_comm %>%
   pivot_longer(
     cols = c(avg_infection, avg_death, avg_recovery, avg_active),
@@ -195,5 +195,5 @@ ggplot(covid_long, aes(x = factor(Community), y = value, fill = metric)) +
   ylim(0, max(covid_long$value, na.rm = TRUE) * 1.2)
 
 
-# 饮食习惯共性
+# Dietary pattern summary placeholder
 
