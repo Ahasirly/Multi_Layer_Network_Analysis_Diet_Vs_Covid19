@@ -1,63 +1,68 @@
-# === Load required packages ===
+# === Install and load required packages ===
 library(tidyverse)
 library(igraph)
 library(scales)
 library(readr)
 
-# === Plot output setup ===
-dir.create("Plots", showWarnings = FALSE)
-plot_file <- file.path("Plots", "1_network_analysis.pdf")
-pdf(plot_file, width = 10, height = 8, onefile = TRUE)
-on.exit(dev.off(), add = TRUE)
+# === Import data ===
+# Protein supply data
+protein_data <- read_csv("C:/Users/grizz/Downloads/archive (3)/Protein_Supply_Quantity_Data.csv")
 
-# === Load data ===
-data <- read_csv("data/Food_Supply_kcal_Data.csv")
+# Economic data
+econ_path <- "C:/Users/grizz/Downloads/Countries.csv/Countries.csv"
+econ_raw <- read.csv(econ_path, stringsAsFactors = FALSE)
 
-# === Prepare numeric matrix for similarity analysis ===
-numeric_data <- data %>%
+# === Data preprocessing (dietary network analysis) ===
+# Extract numeric dietary data (exclude non-dietary indicators)
+numeric_data <- protein_data %>%
   select(-`Unit (all except Population)`, -Population, -Obesity, -Undernourished,
          -Confirmed, -Deaths, -Recovered, -Active) %>%
   column_to_rownames("Country")
 
+# Standardize and construct network
 mat <- as.matrix(numeric_data)
 mat_norm <- scale(mat)
 
 # =============================
-# 1. Network based on Pearson correlations
+# ① Network analysis based on Pearson correlation coefficient
 # =============================
-sim_cor <- cor(t(mat_norm))
+sim_cor <- cor(t(mat_norm))  # Calculate dietary pattern correlation between countries
 threshold_cor <- 0.6
 adj_cor <- sim_cor
-adj_cor[adj_cor < threshold_cor] <- 0
+adj_cor[adj_cor < threshold_cor] <- 0  # Filter low correlation values
 g <- graph_from_adjacency_matrix(adj_cor, mode = "undirected", weighted = TRUE, diag = FALSE)
 
+# Calculate network indicators
 deg <- degree(g)
 btw <- betweenness(g)
-comm <- cluster_louvain(g)
+comm <- cluster_louvain(g)  # Louvain community detection
 
-cat("==== Network based on Pearson correlations ====\n")
+# Output basic network information
+cat("==== Network based on Pearson Correlation ====\n")
 cat("Average degree: ", mean(deg), "\n")
 cat("Number of communities: ", length(unique(membership(comm))), "\n")
-cat("Top 10 countries by betweenness:\n")
+cat("Top 10 countries by betweenness centrality:\n")
 print(sort(btw, decreasing = TRUE)[1:10])
 
-# --- Visualise network ---
+# Visualize the network
 plot(
   g,
   vertex.size = rescale(deg, to = c(5, 15)),
   vertex.color = membership(comm),
   vertex.label = NA,
   edge.width = rescale(E(g)$weight, to = c(0.2, 2)),
-  main = "Global Dietary Network (Pearson similarity > 0.6)"
+  main = "National Dietary Pattern Network (Pearson Similarity > 0.6)"
 )
 
-# --- Report countries in each community ---
+# Extract community information (clean country names)
 country_clusters <- data.frame(
-  Country = names(membership(comm)),
-  Community = membership(comm)
+  Country = trimws(names(membership(comm))),  # Standardize country names by trimming whitespace
+  Community = membership(comm),
+  stringsAsFactors = FALSE
 )
 
-cat("\nCountries by community (Pearson similarity network):\n")
+# Output countries in each community
+cat("\nCountries in each community (Pearson similarity network):\n")
 for (c in sort(unique(country_clusters$Community))) {
   cat(paste0("\n[Community ", c, "]\n"))
   cat(paste(country_clusters$Country[country_clusters$Community == c], collapse = ", "))
@@ -65,135 +70,254 @@ for (c in sort(unique(country_clusters$Community))) {
 }
 
 # =============================
-# 2. Attach obesity and undernourishment data
+# ② Integrate health, COVID-19 and economic data
 # =============================
-obesity_data <- data %>%
+# 1. Health data (obesity and undernourishment rates)
+health_data <- protein_data %>%
   select(Country, Obesity, Undernourished) %>%
   mutate(
+    Country = trimws(Country),
     Obesity = parse_number(as.character(Obesity)),
     Undernourished = parse_number(as.character(Undernourished))
   )
 
-country_clusters_clean <- country_clusters %>%
-  left_join(obesity_data, by = "Country")
+# 2. COVID-19 data (convert to per 100 people indicators)
+covid_data <- protein_data %>%
+  # Keep unit column for judgment (will be excluded later)
+  select(Country, Confirmed, Deaths, Recovered, Active, Population, `Unit (all except Population)`) %>%
+  mutate(
+    Country = trimws(Country),
+    across(c(Confirmed, Deaths, Recovered, Active, Population), as.numeric),
+    # Convert to per 100 people based on unit
+    infection_rate = ifelse(
+      grepl("%", `Unit (all except Population)`),
+      Confirmed,  # Already in percentage
+      Confirmed / Population * 100  # Convert raw cases to percentage
+    ),
+    death_rate = ifelse(
+      grepl("%", `Unit (all except Population)`),
+      Deaths,
+      Deaths / Population * 100
+    ),
+    recovery_rate = ifelse(
+      grepl("%", `Unit (all except Population)`),
+      Recovered,
+      Recovered / Population * 100
+    ),
+    active_rate = ifelse(
+      grepl("%", `Unit (all except Population)`),
+      Active,
+      Active / Population * 100
+    )
+  ) %>%
+  # Exclude unnecessary columns (unit column has served its purpose)
+  select(Country, infection_rate, death_rate, recovery_rate, active_rate)
+
+# 3. Economic data (year 2022)
+econ_2022 <- econ_raw %>%
+  filter(Year == 2022) %>%
+  select(
+    Country = Country.Name,
+    GDP,
+    GDP_per_cap = GDP.Per.Capita,
+    Agriculture = Agriculture....GDP.,
+    Industry = Industry....GDP.,
+    Service = Service....GDP.,
+    Health_exp = Health.Expenditure....GDP.,
+    Education_exp = Education.Expenditure....GDP.
+  ) %>%
+  mutate(Country = trimws(Country))  # Standardize country name format
 
 # =============================
-# 3. Compare health indicators in the first five communities
+# ③ Unified data merging and community filtering
 # =============================
-top5_clusters <- sort(unique(country_clusters_clean$Community))[1:5]
+# Merge all data (community + health + COVID-19 + economy)
+all_merged <- country_clusters %>%
+  left_join(health_data, by = "Country") %>%
+  left_join(covid_data, by = "Country") %>%
+  left_join(econ_2022, by = "Country") %>%
+  filter(!is.na(Community))  # Exclude countries without community classification
 
-community_health <- country_clusters_clean %>%
-  filter(Community %in% top5_clusters) %>%
+# Filter top 5 communities with complete data (core step: ensure consistent communities across all analyses)
+valid_communities <- all_merged %>%
+  # Exclude communities with missing key indicators
+  filter(
+    !is.na(Obesity), 
+    !is.na(infection_rate), 
+    !is.na(GDP)
+  ) %>%
+  pull(Community) %>%
+  unique() %>%
+  sort() %>%  # Sort by community number
+  head(5)  # Take top 5 valid communities
+
+# Filter data based on valid communities
+analysis_data <- all_merged %>%
+  filter(Community %in% valid_communities) %>%
+  mutate(Community = factor(Community, levels = valid_communities))  # Fix community order
+
+# =============================
+# ④ Indicator summary by community
+# =============================
+community_summary <- analysis_data %>%
   group_by(Community) %>%
   summarise(
+    n_countries = n(),
+    # Health indicators
     mean_obesity = mean(Obesity, na.rm = TRUE),
     mean_undernourished = mean(Undernourished, na.rm = TRUE),
-    n_countries = n()
-  ) %>%
-  arrange(Community)
+    # COVID-19 indicators
+    mean_infection = mean(infection_rate, na.rm = TRUE),
+    mean_death = mean(death_rate, na.rm = TRUE),
+    mean_recovery = mean(recovery_rate, na.rm = TRUE),
+    # Economic indicators
+    mean_GDP = mean(GDP, na.rm = TRUE),
+    mean_GDP_per_cap = mean(GDP_per_cap, na.rm = TRUE),
+    mean_agri = mean(Agriculture, na.rm = TRUE),
+    mean_industry = mean(Industry, na.rm = TRUE),
+    mean_service = mean(Service, na.rm = TRUE)
+  )
 
-cat("\n===== Health indicators for the first five communities =====\n")
-print(community_health)
-
-# --- Visualise health comparison ---
-community_health_long <- community_health %>%
-  pivot_longer(cols = c(mean_obesity, mean_undernourished),
-               names_to = "metric", values_to = "value") %>%
-  mutate(metric = recode(metric,
-                         mean_obesity = "Mean Obesity (%)",
-                         mean_undernourished = "Mean Undernourishment (%)"))
-
-ggplot(community_health_long, aes(x = factor(Community), y = value, fill = metric)) +
-  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
-  geom_text(aes(label = ifelse(is.na(value), "NA", round(value, 2))),
-            position = position_dodge(width = 0.8), vjust = -0.5, size = 3) +
-  labs(
-    title = "Top 5 Communities: Mean Obesity vs Undernourishment",
-    x = "Community",
-    y = "Average Percentage (%)",
-    fill = ""
-  ) +
-  theme_minimal(base_size = 13) +
-  ylim(0, max(community_health_long$value, na.rm = TRUE) * 1.2)
+cat("\n===== Community Comprehensive Indicator Summary =====\n")
+print(community_summary)
 
 # =============================
-# 4. COVID-19 indicator analysis (convert percentages to per-100 rates)
+# ⑤ Visualization with unified community order
 # =============================
-covid_cols <- c("Country", "Confirmed", "Deaths", "Recovered", "Active", "Population")
-
-covid_data <- data %>%
-  select(all_of(covid_cols)) %>%
-  mutate(across(c(Confirmed, Deaths, Recovered, Active), as.numeric))
-
-# Determine whether percentage units are present
-if ("% " %in% unique(trimws(data$`Unit (all except Population)`)) ||
-    "%" %in% unique(trimws(data$`Unit (all except Population)`))) {
-  cat("Detected percentage units: treating values as per-100 population metrics.\n")
-  covid_data <- covid_data %>%
-    mutate(
-      infection_rate = Confirmed,   # percentages already represent per 100 people
-      death_rate = Deaths,
-      recovery_rate = Recovered,
-      active_rate = Active
-    )
-} else {
-  cat("No percentage units detected: computing rates per 100 people using population.\n")
-  covid_data <- covid_data %>%
-    mutate(across(c(Population), as.numeric)) %>%
-    mutate(
-      infection_rate = Confirmed / Population * 100,
-      death_rate = Deaths / Population * 100,
-      recovery_rate = Recovered / Population * 100,
-      active_rate = Active / Population * 100
-    )
-}
-
-# Merge community information with COVID metrics
-covid_merged <- covid_data %>%
-  left_join(country_clusters_clean %>% select(Country, Community), by = "Country")
-
-top5_clusters <- sort(unique(covid_merged$Community))[1:5]
-
-covid_by_comm <- covid_merged %>%
-  filter(Community %in% top5_clusters) %>%
-  group_by(Community) %>%
-  summarise(
-    avg_infection = mean(infection_rate, na.rm = TRUE),
-    avg_death = mean(death_rate, na.rm = TRUE),
-    avg_recovery = mean(recovery_rate, na.rm = TRUE),
-    avg_active = mean(active_rate, na.rm = TRUE),
-    n_countries = n()
-  ) %>%
-  arrange(Community)
-
-cat("\n===== COVID-19 indicators for the first five communities (per 100 people) =====\n")
-print(covid_by_comm)
-
-# === Visualise COVID comparison ===
-covid_long <- covid_by_comm %>%
+# 1. Health indicators comparison
+health_long <- community_summary %>%
+  select(Community, mean_obesity, mean_undernourished) %>%
   pivot_longer(
-    cols = c(avg_infection, avg_death, avg_recovery, avg_active),
-    names_to = "metric", values_to = "value"
+    cols = -Community,
+    names_to = "metric",
+    values_to = "value"
   ) %>%
-  mutate(metric = recode(metric,
-                         avg_infection = "Infection rate",
-                         avg_death = "Death rate",
-                         avg_recovery = "Recovery rate",
-                         avg_active = "Active case rate"))
+  mutate(
+    metric = recode(metric,
+                    mean_obesity = "Obesity Rate (%)",
+                    mean_undernourished = "Undernourished Rate (%)"
+    )
+  )
 
-ggplot(covid_long, aes(x = factor(Community), y = value, fill = metric)) +
-  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
-  geom_text(aes(label = ifelse(is.na(value), "NA", round(value, 2))),
-            position = position_dodge(width = 0.8), vjust = -0.3, size = 3) +
-  labs(
-    title = "Top 5 Communities: Average Infection / Death / Recovery / Active Rates",
-    x = "Community",
-    y = "Cases per 100 people (%)",
-    fill = ""
+ggplot(health_long, aes(x = Community, y = value, fill = metric)) +
+  geom_col(position = "dodge", width = 0.7) +
+  geom_text(
+    aes(label = round(value, 1)),
+    position = position_dodge(0.7),
+    vjust = -0.3,
+    size = 3.5
   ) +
-  theme_minimal(base_size = 13) +
-  ylim(0, max(covid_long$value, na.rm = TRUE) * 1.2)
+  labs(title = "Health Indicators Comparison (Top 5 Communities)", x = "Community", y = "Average Value (%)", fill = "") +
+  theme_minimal() +
+  ylim(0, max(health_long$value) * 1.2)
+
+# 2. COVID-19 indicators comparison
+covid_long <- community_summary %>%
+  select(Community, mean_infection, mean_death, mean_recovery) %>%
+  pivot_longer(
+    cols = -Community,
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = recode(metric,
+                    mean_infection = "Infection Rate (%)",
+                    mean_death = "Death Rate (%)",
+                    mean_recovery = "Recovery Rate (%)"
+    )
+  )
+
+ggplot(covid_long, aes(x = Community, y = value, fill = metric)) +
+  geom_col(position = "dodge", width = 0.7) +
+  geom_text(
+    aes(label = round(value, 2)),
+    position = position_dodge(0.7),
+    vjust = -0.3,
+    size = 3.5
+  ) +
+  labs(title = "COVID-19 Indicators Comparison (Top 5 Communities)", x = "Community", y = "Per 100 People (%)", fill = "") +
+  theme_minimal() +
+  ylim(0, max(covid_long$value) * 1.2)
+
+# 3. GDP comparison alone (consistent with integrated chart)
+ggplot(community_summary, aes(x = Community, y = mean_GDP)) +
+  geom_col(fill = "steelblue", width = 0.7) +
+  geom_text(
+    aes(label = scales::comma(round(mean_GDP, 0))),
+    vjust = -0.3,
+    size = 3.5
+  ) +
+  labs(title = "Average GDP Comparison (Top 5 Communities, 2022)", x = "Community", y = "GDP") +
+  theme_minimal() +
+  scale_y_continuous(labels = scales::comma)  # Convert scientific notation to readable format
+
+# 4. Economic structure comparison
+econ_struct_long <- community_summary %>%
+  select(Community, mean_agri, mean_industry, mean_service) %>%
+  pivot_longer(
+    cols = -Community,
+    names_to = "sector",
+    values_to = "value"
+  ) %>%
+  mutate(
+    sector = recode(sector,
+                    mean_agri = "Agriculture",
+                    mean_industry = "Industry",
+                    mean_service = "Service"
+    )
+  )
+
+ggplot(econ_struct_long, aes(x = Community, y = value, fill = sector)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = round(value, 1)),
+    position = position_stack(vjust = 0.5),
+    size = 3
+  ) +
+  labs(title = "Economic Structure Comparison (Top 5 Communities)", x = "Community", y = "% of GDP", fill = "") +
+  theme_minimal()
 
 
-# Dietary pattern summary placeholder
+
+# 5. Integrated indicator chart (with GDP scaling) and summary information
+combined_long <- community_summary %>%
+  select(Community, mean_GDP, mean_infection, mean_death, mean_recovery, mean_obesity) %>%
+  pivot_longer(
+    cols = -Community,
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = recode(metric,
+                    mean_GDP = "GDP (scaled)",
+                    mean_infection = "Infection Rate (%)",
+                    mean_death = "Death Rate (%)",
+                    mean_recovery = "Recovery Rate (%)",
+                    mean_obesity = "Obesity Rate (%)"
+    ),
+    # GDP scaling (adjust divisor based on data range for better visualization)
+    value_scaled = ifelse(metric == "GDP (scaled)", value / 1e11, value)  # Scaling factor can be adjusted based on actual data
+  )
+
+# Print numerical summary of integrated chart
+cat("\n===== Integrated Chart Data Summary (Corresponding to Chart) =====\n")
+print(combined_long %>%
+        select(Community, metric, value_scaled) %>%
+        pivot_wider(names_from = metric, values_from = value_scaled) %>%
+        arrange(Community) %>%
+        mutate(across(where(is.numeric), ~round(., 2)))  # Keep 2 decimal places
+)
+
+# Plot integrated chart
+ggplot(combined_long, aes(x = Community, y = value_scaled, fill = metric)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = round(value_scaled, 2)),
+    vjust = -0.3,
+    size = 3.5
+  ) +
+  facet_wrap(~metric, scales = "free_y", ncol = 3) +
+  labs(title = "Comprehensive Community Indicators (GDP Scaled)", x = "Community", y = "Value") +
+  theme_minimal() +
+  theme(legend.position = "none")
 
