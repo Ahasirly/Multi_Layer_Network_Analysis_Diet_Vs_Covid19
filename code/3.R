@@ -10,7 +10,8 @@ library(viridisLite)
 # ------------------------------
 # Configuration parameters (adjustable)
 # ------------------------------
-data_dir <- "C:/Users/grizz/Downloads/archive (3)"
+# Data directory relative to the code/ folder
+data_dir <- file.path("..", "data")
 files <- list(
   fat = file.path(data_dir, "Fat_Supply_Quantity_Data.csv"),
   kcal = file.path(data_dir, "Food_Supply_kcal_Data.csv"),

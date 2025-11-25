@@ -5,11 +5,11 @@ library(scales)
 library(readr)
 
 # === Import data ===
-# Protein supply data
-protein_data <- read_csv("C:/Users/grizz/Downloads/archive (3)/Protein_Supply_Quantity_Data.csv")
+# Protein supply data (relative to repository root)
+protein_data <- read_csv(file.path("..", "data", "Protein_Supply_Quantity_Data.csv"))
 
-# Economic data
-econ_path <- "C:/Users/grizz/Downloads/Countries.csv/Countries.csv"
+# Economic data (store Countries.csv in data/ to keep paths portable)
+econ_path <- file.path("..", "data", "Countries.csv")
 econ_raw <- read.csv(econ_path, stringsAsFactors = FALSE)
 
 # === Data preprocessing (dietary network analysis) ===
