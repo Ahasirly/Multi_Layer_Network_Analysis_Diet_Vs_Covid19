@@ -1,0 +1,512 @@
+ggplot(combined_long, aes(x = Community, y = value_scaled, fill = metric)) +
+geom_col(width = 0.7) +
+geom_text(
+aes(label = round(value_scaled, 2)),
+vjust = -0.3,
+size = 3.5
+) +
+facet_wrap(~metric, scales = "free_y", ncol = 3) +
+labs(title = "Comprehensive Community Indicators (GDP Scaled)", x = "Community", y = "Value") +
+theme_minimal() +
+theme(legend.position = "none")
+# =============================================
+# Complete standalone script
+# =============================================
+library(tidyverse)
+library(igraph)
+library(ggraph)
+# === Data directory (RStudio-friendly) ===
+data_dir <- if (dir.exists("data")) {
+"data"
+} else if (dir.exists(file.path("..", "data"))) {
+file.path("..", "data")
+} else {
+stop("Cannot find data/ directory. Open Project.Rproj or run from project root/code/")
+}
+# Ensure an active RStudio plot device (prevents "invalid plot index" if device was closed)
+ensure_plot_device <- function() {
+if (interactive() && is.null(dev.list())) {
+grDevices::dev.new(noRStudioGD = FALSE)
+}
+}
+# === Plot output setup (RStudio/interactive plots by default) ===
+if (interactive()) {
+message("Using current R session plot device; no PDF written.")
+} else {
+dir.create("Plots", showWarnings = FALSE)
+plot_file <- file.path("Plots", "2_food_covid_networks.pdf")
+pdf(plot_file, width = 10, height = 8, onefile = TRUE)
+on.exit(dev.off(), add = TRUE)
+}
+# === Load data ===
+data <- read.csv(file.path(data_dir, "Food_Supply_kcal_Data.csv"), check.names = FALSE)
+# === Select food-related columns and target variables ===
+valid_food_cols <- c("Alcoholic Beverages","Animal Products","Animal fats","Aquatic Products, Other",
+"Cereals - Excluding Beer","Eggs","Fish, Seafood","Fruits - Excluding Wine",
+"Meat","Milk - Excluding Butter","Miscellaneous","Offals","Oilcrops","Pulses",
+"Spices","Starchy Roots","Stimulants","Sugar Crops","Sugar & Sweeteners",
+"Treenuts","Vegetal Products","Vegetable Oils","Vegetables")
+infection_col <- "Confirmed"   # infection rate variable
+recovery_col <- "Recovered"    # recovery rate variable
+# === Compute correlations ===
+ensure_plot_device()
+cor_matrix_inf <- sapply(valid_food_cols, function(col) cor(data[[col]], data[[infection_col]], use = "complete.obs"))
+cor_matrix_rec <- sapply(valid_food_cols, function(col) cor(data[[col]], data[[recovery_col]], use = "complete.obs"))
+# === Build edge tables (infection and recovery rates) ===
+edges1 <- data.frame(
+from = valid_food_cols,
+to = "Infection_Rate",
+Correlation = as.numeric(cor_matrix_inf),
+weight = abs(as.numeric(cor_matrix_inf))
+)
+edges2 <- data.frame(
+from = valid_food_cols,
+to = "Recovery_Rate",
+Correlation = as.numeric(cor_matrix_rec),
+weight = abs(as.numeric(cor_matrix_rec))
+)
+# === Utility: clean edge attributes ===
+clean_edges <- function(edges, valid_food_cols) {
+edges %>%
+mutate(
+from = as.character(from),
+to   = as.character(to),
+from = trimws(from),
+to   = trimws(to),
+from = gsub("[[:cntrl:]]", "", from),
+to   = gsub("[[:cntrl:]]", "", to),
+from = enc2utf8(from),
+to   = enc2utf8(to),
+Correlation = as.numeric(Correlation),
+weight = as.numeric(weight)
+)
+}
+edges1 <- clean_edges(edges1, valid_food_cols)
+edges2 <- clean_edges(edges2, valid_food_cols)
+# === Build node tables ===
+build_nodes <- function(edges, valid_food_cols) {
+vertices <- unique(c(edges$from, edges$to))
+valid_food_cols_clean <- trimws(enc2utf8(as.character(valid_food_cols)))
+data.frame(
+name = vertices,
+type = ifelse(vertices %in% valid_food_cols_clean, "Food", "Rate"),
+stringsAsFactors = FALSE
+)
+}
+nodes1 <- build_nodes(edges1, valid_food_cols)
+nodes2 <- build_nodes(edges2, valid_food_cols)
+# === Build graph objects ===
+g1 <- graph_from_data_frame(d = edges1, vertices = nodes1, directed = FALSE)
+g2 <- graph_from_data_frame(d = edges2, vertices = nodes2, directed = FALSE)
+# === Plotting helper ===
+plot_network <- function(graph, title) {
+ggraph(graph, layout = "fr") +
+geom_edge_link(aes(width = weight, color = Correlation), alpha = 0.8) +
+geom_node_point(aes(color = type), size = 6) +
+geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+scale_color_manual(values = c("Food" = "#2E8B57", "Rate" = "#4682B4")) +
+scale_edge_color_gradient2(low = "#2166AC", mid = "grey80", high = "#B2182B", midpoint = 0) +
+theme_void() +
+labs(title = title, color = "Node Type", edge_color = "Correlation")
+}
+# === Render plots ===
+set.seed(42)
+p1 <- plot_network(g1, "Food vs Infection Rate (Network)")
+p2 <- plot_network(g2, "Food vs Recovery Rate (Network)")
+# === Display ===
+print(p1)
+print(p2)
+# === Install and load required packages ===
+library(tidyverse)
+library(igraph)
+library(scales)
+library(readr)
+# === Import data ===
+# Protein supply data (relative to repository root)
+protein_data <- read_csv(file.path("..", "data", "Protein_Supply_Quantity_Data.csv"))
+# === Install and load required packages ===
+library(tidyverse)
+library(igraph)
+library(scales)
+library(readr)
+# === Import data ===
+# Protein supply data (relative to repository root)
+protein_data <- read_csv(file.path("data", "Protein_Supply_Quantity_Data.csv"))
+# Economic data (store Countries.csv in data/ to keep paths portable)
+econ_path <- file.path("data", "Countries.csv")
+econ_raw <- read.csv(econ_path, stringsAsFactors = FALSE)
+# === Data preprocessing (dietary network analysis) ===
+# Extract numeric dietary data (exclude non-dietary indicators)
+numeric_data <- protein_data %>%
+select(-`Unit (all except Population)`, -Population, -Obesity, -Undernourished,
+-Confirmed, -Deaths, -Recovered, -Active) %>%
+column_to_rownames("Country")
+# Standardize and construct network
+mat <- as.matrix(numeric_data)
+mat_norm <- scale(mat)
+# =============================
+# ① Network analysis based on Pearson correlation coefficient
+# =============================
+sim_cor <- cor(t(mat_norm))  # Calculate dietary pattern correlation between countries
+threshold_cor <- 0.6
+adj_cor <- sim_cor
+adj_cor[adj_cor < threshold_cor] <- 0  # Filter low correlation values
+g <- graph_from_adjacency_matrix(adj_cor, mode = "undirected", weighted = TRUE, diag = FALSE)
+# Calculate network indicators
+deg <- degree(g)
+btw <- betweenness(g)
+comm <- cluster_louvain(g)  # Louvain community detection
+# Output basic network information
+cat("==== Network based on Pearson Correlation ====\n")
+cat("Average degree: ", mean(deg), "\n")
+cat("Number of communities: ", length(unique(membership(comm))), "\n")
+cat("Top 10 countries by betweenness centrality:\n")
+print(sort(btw, decreasing = TRUE)[1:10])
+# Visualize the network
+plot(
+g,
+vertex.size = rescale(deg, to = c(5, 15)),
+vertex.color = membership(comm),
+vertex.label = NA,
+edge.width = rescale(E(g)$weight, to = c(0.2, 2)),
+main = "National Dietary Pattern Network (Pearson Similarity > 0.6)"
+)
+# Extract community information (clean country names)
+country_clusters <- data.frame(
+Country = trimws(names(membership(comm))),  # Standardize country names by trimming whitespace
+Community = membership(comm),
+stringsAsFactors = FALSE
+)
+# Output countries in each community
+cat("\nCountries in each community (Pearson similarity network):\n")
+for (c in sort(unique(country_clusters$Community))) {
+cat(paste0("\n[Community ", c, "]\n"))
+cat(paste(country_clusters$Country[country_clusters$Community == c], collapse = ", "))
+cat("\n")
+}
+# =============================
+# ② Integrate health, COVID-19 and economic data
+# =============================
+# 1. Health data (obesity and undernourishment rates)
+health_data <- protein_data %>%
+select(Country, Obesity, Undernourished) %>%
+mutate(
+Country = trimws(Country),
+Obesity = parse_number(as.character(Obesity)),
+Undernourished = parse_number(as.character(Undernourished))
+)
+# 2. COVID-19 data (convert to per 100 people indicators)
+covid_data <- protein_data %>%
+# Keep unit column for judgment (will be excluded later)
+select(Country, Confirmed, Deaths, Recovered, Active, Population, `Unit (all except Population)`) %>%
+mutate(
+Country = trimws(Country),
+across(c(Confirmed, Deaths, Recovered, Active, Population), as.numeric),
+# Convert to per 100 people based on unit
+infection_rate = ifelse(
+grepl("%", `Unit (all except Population)`),
+Confirmed,  # Already in percentage
+Confirmed / Population * 100  # Convert raw cases to percentage
+),
+death_rate = ifelse(
+grepl("%", `Unit (all except Population)`),
+Deaths,
+Deaths / Population * 100
+),
+recovery_rate = ifelse(
+grepl("%", `Unit (all except Population)`),
+Recovered,
+Recovered / Population * 100
+),
+active_rate = ifelse(
+grepl("%", `Unit (all except Population)`),
+Active,
+Active / Population * 100
+)
+) %>%
+# Exclude unnecessary columns (unit column has served its purpose)
+select(Country, infection_rate, death_rate, recovery_rate, active_rate)
+# 3. Economic data (year 2022)
+econ_2022 <- econ_raw %>%
+filter(Year == 2022) %>%
+select(
+Country = Country.Name,
+GDP,
+GDP_per_cap = GDP.Per.Capita,
+Agriculture = Agriculture....GDP.,
+Industry = Industry....GDP.,
+Service = Service....GDP.,
+Health_exp = Health.Expenditure....GDP.,
+Education_exp = Education.Expenditure....GDP.
+) %>%
+mutate(Country = trimws(Country))  # Standardize country name format
+# =============================
+# ③ Unified data merging and community filtering
+# =============================
+# Merge all data (community + health + COVID-19 + economy)
+all_merged <- country_clusters %>%
+left_join(health_data, by = "Country") %>%
+left_join(covid_data, by = "Country") %>%
+left_join(econ_2022, by = "Country") %>%
+filter(!is.na(Community))  # Exclude countries without community classification
+# Filter top 5 communities with complete data (core step: ensure consistent communities across all analyses)
+valid_communities <- all_merged %>%
+# Exclude communities with missing key indicators
+filter(
+!is.na(Obesity),
+!is.na(infection_rate),
+!is.na(GDP)
+) %>%
+pull(Community) %>%
+unique() %>%
+sort() %>%  # Sort by community number
+head(5)  # Take top 5 valid communities
+# Filter data based on valid communities
+analysis_data <- all_merged %>%
+filter(Community %in% valid_communities) %>%
+mutate(Community = factor(Community, levels = valid_communities))  # Fix community order
+# =============================
+# ④ Indicator summary by community
+# =============================
+community_summary <- analysis_data %>%
+group_by(Community) %>%
+summarise(
+n_countries = n(),
+# Health indicators
+mean_obesity = mean(Obesity, na.rm = TRUE),
+mean_undernourished = mean(Undernourished, na.rm = TRUE),
+# COVID-19 indicators
+mean_infection = mean(infection_rate, na.rm = TRUE),
+mean_death = mean(death_rate, na.rm = TRUE),
+mean_recovery = mean(recovery_rate, na.rm = TRUE),
+# Economic indicators
+mean_GDP = mean(GDP, na.rm = TRUE),
+mean_GDP_per_cap = mean(GDP_per_cap, na.rm = TRUE),
+mean_agri = mean(Agriculture, na.rm = TRUE),
+mean_industry = mean(Industry, na.rm = TRUE),
+mean_service = mean(Service, na.rm = TRUE)
+)
+cat("\n===== Community Comprehensive Indicator Summary =====\n")
+print(community_summary)
+# =============================
+# ⑤ Visualization with unified community order
+# =============================
+# 1. Health indicators comparison
+health_long <- community_summary %>%
+select(Community, mean_obesity, mean_undernourished) %>%
+pivot_longer(
+cols = -Community,
+names_to = "metric",
+values_to = "value"
+) %>%
+mutate(
+metric = recode(metric,
+mean_obesity = "Obesity Rate (%)",
+mean_undernourished = "Undernourished Rate (%)"
+)
+)
+ggplot(health_long, aes(x = Community, y = value, fill = metric)) +
+geom_col(position = "dodge", width = 0.7) +
+geom_text(
+aes(label = round(value, 1)),
+position = position_dodge(0.7),
+vjust = -0.3,
+size = 3.5
+) +
+labs(title = "Health Indicators Comparison (Top 5 Communities)", x = "Community", y = "Average Value (%)", fill = "") +
+theme_minimal() +
+ylim(0, max(health_long$value) * 1.2)
+# 2. COVID-19 indicators comparison
+covid_long <- community_summary %>%
+select(Community, mean_infection, mean_death, mean_recovery) %>%
+pivot_longer(
+cols = -Community,
+names_to = "metric",
+values_to = "value"
+) %>%
+mutate(
+metric = recode(metric,
+mean_infection = "Infection Rate (%)",
+mean_death = "Death Rate (%)",
+mean_recovery = "Recovery Rate (%)"
+)
+)
+ggplot(covid_long, aes(x = Community, y = value, fill = metric)) +
+geom_col(position = "dodge", width = 0.7) +
+geom_text(
+aes(label = round(value, 2)),
+position = position_dodge(0.7),
+vjust = -0.3,
+size = 3.5
+) +
+labs(title = "COVID-19 Indicators Comparison (Top 5 Communities)", x = "Community", y = "Per 100 People (%)", fill = "") +
+theme_minimal() +
+ylim(0, max(covid_long$value) * 1.2)
+# 3. GDP comparison alone (consistent with integrated chart)
+ggplot(community_summary, aes(x = Community, y = mean_GDP)) +
+geom_col(fill = "steelblue", width = 0.7) +
+geom_text(
+aes(label = scales::comma(round(mean_GDP, 0))),
+vjust = -0.3,
+size = 3.5
+) +
+labs(title = "Average GDP Comparison (Top 5 Communities, 2022)", x = "Community", y = "GDP") +
+theme_minimal() +
+scale_y_continuous(labels = scales::comma)  # Convert scientific notation to readable format
+# 4. Economic structure comparison
+econ_struct_long <- community_summary %>%
+select(Community, mean_agri, mean_industry, mean_service) %>%
+pivot_longer(
+cols = -Community,
+names_to = "sector",
+values_to = "value"
+) %>%
+mutate(
+sector = recode(sector,
+mean_agri = "Agriculture",
+mean_industry = "Industry",
+mean_service = "Service"
+)
+)
+ggplot(econ_struct_long, aes(x = Community, y = value, fill = sector)) +
+geom_col(width = 0.7) +
+geom_text(
+aes(label = round(value, 1)),
+position = position_stack(vjust = 0.5),
+size = 3
+) +
+labs(title = "Economic Structure Comparison (Top 5 Communities)", x = "Community", y = "% of GDP", fill = "") +
+theme_minimal()
+# 5. Integrated indicator chart (with GDP scaling) and summary information
+combined_long <- community_summary %>%
+select(Community, mean_GDP, mean_infection, mean_death, mean_recovery, mean_obesity) %>%
+pivot_longer(
+cols = -Community,
+names_to = "metric",
+values_to = "value"
+) %>%
+mutate(
+metric = recode(metric,
+mean_GDP = "GDP (scaled)",
+mean_infection = "Infection Rate (%)",
+mean_death = "Death Rate (%)",
+mean_recovery = "Recovery Rate (%)",
+mean_obesity = "Obesity Rate (%)"
+),
+# GDP scaling (adjust divisor based on data range for better visualization)
+value_scaled = ifelse(metric == "GDP (scaled)", value / 1e11, value)  # Scaling factor can be adjusted based on actual data
+)
+# Print numerical summary of integrated chart
+cat("\n===== Integrated Chart Data Summary (Corresponding to Chart) =====\n")
+print(combined_long %>%
+select(Community, metric, value_scaled) %>%
+pivot_wider(names_from = metric, values_from = value_scaled) %>%
+arrange(Community) %>%
+mutate(across(where(is.numeric), ~round(., 2)))  # Keep 2 decimal places
+)
+# Plot integrated chart
+ggplot(combined_long, aes(x = Community, y = value_scaled, fill = metric)) +
+geom_col(width = 0.7) +
+geom_text(
+aes(label = round(value_scaled, 2)),
+vjust = -0.3,
+size = 3.5
+) +
+facet_wrap(~metric, scales = "free_y", ncol = 3) +
+labs(title = "Comprehensive Community Indicators (GDP Scaled)", x = "Community", y = "Value") +
+theme_minimal() +
+theme(legend.position = "none")
+# =============================================
+# Complete standalone script
+# =============================================
+library(tidyverse)
+library(igraph)
+library(ggraph)
+library(ggrepel)
+# === Plot output setup ===
+dir.create("Plots", showWarnings = FALSE)
+plot_file <- file.path("Plots", "2_food_covid_networks.pdf")
+pdf(plot_file, width = 10, height = 8, onefile = TRUE)
+on.exit(dev.off(), add = TRUE)
+# === Load data ===
+data <- read.csv("data/Food_Supply_kcal_Data.csv", check.names = FALSE)
+# === Select food-related columns and target variables ===
+valid_food_cols <- c(
+"Alcoholic Beverages","Animal Products","Animal fats","Aquatic Products, Other",
+"Cereals - Excluding Beer","Eggs","Fish, Seafood","Fruits - Excluding Wine",
+"Meat","Milk - Excluding Butter","Miscellaneous","Offals","Oilcrops","Pulses",
+"Spices","Starchy Roots","Stimulants","Sugar Crops","Sugar & Sweeteners",
+"Treenuts","Vegetal Products","Vegetable Oils","Vegetables"
+)
+infection_col <- "Confirmed"   # infection rate variable
+recovery_col <- "Recovered"    # recovery rate variable
+# === Compute correlations ===
+cor_matrix_inf <- sapply(valid_food_cols, function(col) {
+cor(data[[col]], data[[infection_col]], use = "complete.obs")
+})
+cor_matrix_rec <- sapply(valid_food_cols, function(col) {
+cor(data[[col]], data[[recovery_col]], use = "complete.obs")
+})
+# === Build edge tables (infection and recovery rates) ===
+edges1 <- data.frame(
+from = valid_food_cols,
+to = "Infection_Rate",
+Correlation = as.numeric(cor_matrix_inf),
+weight = abs(as.numeric(cor_matrix_inf))
+)
+edges2 <- data.frame(
+from = valid_food_cols,
+to = "Recovery_Rate",
+Correlation = as.numeric(cor_matrix_rec),
+weight = abs(as.numeric(cor_matrix_rec))
+)
+# === Utility: clean edge attributes ===
+clean_edges <- function(edges, valid_food_cols) {
+edges %>%
+mutate(
+from = as.character(from),
+to   = as.character(to),
+from = trimws(from),
+to   = trimws(to),
+from = gsub("[[:cntrl:]]", "", from),
+to   = gsub("[[:cntrl:]]", "", to),
+from = enc2utf8(from),
+to   = enc2utf8(to),
+Correlation = as.numeric(Correlation),
+weight = as.numeric(weight)
+)
+}
+edges1 <- clean_edges(edges1, valid_food_cols)
+edges2 <- clean_edges(edges2, valid_food_cols)
+# === Build node tables ===
+build_nodes <- function(edges, valid_food_cols) {
+vertices <- unique(c(edges$from, edges$to))
+valid_food_cols_clean <- trimws(enc2utf8(as.character(valid_food_cols)))
+data.frame(
+name = vertices,
+type = ifelse(vertices %in% valid_food_cols_clean, "Food", "Rate"),
+stringsAsFactors = FALSE
+)
+}
+nodes1 <- build_nodes(edges1, valid_food_cols)
+nodes2 <- build_nodes(edges2, valid_food_cols)
+# === Build graph objects ===
+g1 <- graph_from_data_frame(d = edges1, vertices = nodes1, directed = FALSE)
+g2 <- graph_from_data_frame(d = edges2, vertices = nodes2, directed = FALSE)
+# === Plotting helper ===
+plot_network <- function(graph, title) {
+ggraph(graph, layout = "fr") +
+geom_edge_link(aes(edge_width = weight, edge_colour = Correlation), alpha = 0.8) +
+geom_node_point(aes(color = type), size = 6) +
+geom_node_text_repel(aes(label = name), size = 3) +
+scale_color_manual(values = c("Food" = "#2E8B57", "Rate" = "#4682B4")) +
+scale_edge_colour_gradient2(low = "#2166AC", mid = "grey80",
+high = "#B2182B", midpoint = 0) +
+theme_void() +
+labs(title = title, color = "Node Type", edge_colour = "Correlation") +
+guides(edge_width = "none")
+}
+# === Render plots ===
+set.seed(42)
+p1 <- plot_network(g1, "Food vs Infection Rate (Network)")
+install.packages("ggrepel")

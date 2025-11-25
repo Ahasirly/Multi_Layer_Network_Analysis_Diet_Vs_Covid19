@@ -5,11 +5,37 @@ library(scales)
 library(readr)
 
 # === Import data ===
-# Protein supply data (relative to repository root)
-protein_data <- read_csv(file.path("..", "data", "Protein_Supply_Quantity_Data.csv"))
+# Resolve data file paths whether working directory is project root or code/
+find_data_file <- function(filename) {
+  candidates <- c(
+    file.path("data", filename),       # when run from project root
+    file.path("..", "data", filename)  # when run from code/ directory
+  )
+  existing <- candidates[file.exists(candidates)]
+  if (length(existing) == 0) {
+    stop("Could not find ", filename, " in data/ or ../data relative to ", getwd())
+  }
+  existing[[1]]
+}
+
+# Resolve plot output path (supports running from project root or code/)
+find_plot_file <- function(filename) {
+  candidates <- c(
+    file.path("Plots", filename),
+    file.path("..", "Plots", filename)
+  )
+  existing_dirs <- candidates[dir.exists(dirname(candidates))]
+  if (length(existing_dirs) == 0) {
+    stop("Could not find Plots directory relative to ", getwd())
+  }
+  existing_dirs[[1]]
+}
+
+# Protein supply data
+protein_data <- read_csv(find_data_file("Protein_Supply_Quantity_Data.csv"))
 
 # Economic data (store Countries.csv in data/ to keep paths portable)
-econ_path <- file.path("..", "data", "Countries.csv")
+econ_path <- find_data_file("Countries.csv")
 econ_raw <- read.csv(econ_path, stringsAsFactors = FALSE)
 
 # === Data preprocessing (dietary network analysis) ===
@@ -320,4 +346,79 @@ ggplot(combined_long, aes(x = Community, y = value_scaled, fill = metric)) +
   labs(title = "Comprehensive Community Indicators (GDP Scaled)", x = "Community", y = "Value") +
   theme_minimal() +
   theme(legend.position = "none")
+
+# Save all plots generated above to a multi-page PDF
+pdf(find_plot_file("1_network_analysis.pdf"), width = 12, height = 10)
+plot(
+  g,
+  vertex.size = rescale(deg, to = c(5, 15)),
+  vertex.color = membership(comm),
+  vertex.label = NA,
+  edge.width = rescale(E(g)$weight, to = c(0.2, 2)),
+  main = "National Dietary Pattern Network (Pearson Similarity > 0.6)"
+)
+print(
+  ggplot(health_long, aes(x = Community, y = value, fill = metric)) +
+    geom_col(position = "dodge", width = 0.7) +
+    geom_text(
+      aes(label = round(value, 1)),
+      position = position_dodge(0.7),
+      vjust = -0.3,
+      size = 3.5
+    ) +
+    labs(title = "Health Indicators Comparison (Top 5 Communities)", x = "Community", y = "Average Value (%)", fill = "") +
+    theme_minimal() +
+    ylim(0, max(health_long$value) * 1.2)
+)
+print(
+  ggplot(covid_long, aes(x = Community, y = value, fill = metric)) +
+    geom_col(position = "dodge", width = 0.7) +
+    geom_text(
+      aes(label = round(value, 2)),
+      position = position_dodge(0.7),
+      vjust = -0.3,
+      size = 3.5
+    ) +
+    labs(title = "COVID-19 Indicators Comparison (Top 5 Communities)", x = "Community", y = "Per 100 People (%)", fill = "") +
+    theme_minimal() +
+    ylim(0, max(covid_long$value) * 1.2)
+)
+print(
+  ggplot(community_summary, aes(x = Community, y = mean_GDP)) +
+    geom_col(fill = "steelblue", width = 0.7) +
+    geom_text(
+      aes(label = scales::comma(round(mean_GDP, 0))),
+      vjust = -0.3,
+      size = 3.5
+    ) +
+    labs(title = "Average GDP Comparison (Top 5 Communities, 2022)", x = "Community", y = "GDP") +
+    theme_minimal() +
+    scale_y_continuous(labels = scales::comma)
+)
+print(
+  ggplot(econ_struct_long, aes(x = Community, y = value, fill = sector)) +
+    geom_col(width = 0.7) +
+    geom_text(
+      aes(label = round(value, 1)),
+      position = position_stack(vjust = 0.5),
+      size = 3
+    ) +
+    labs(title = "Economic Structure Comparison (Top 5 Communities)", x = "Community", y = "% of GDP", fill = "") +
+    theme_minimal()
+)
+print(
+  ggplot(combined_long, aes(x = Community, y = value_scaled, fill = metric)) +
+    geom_col(width = 0.7) +
+    geom_text(
+      aes(label = round(value_scaled, 2)),
+      vjust = -0.3,
+      size = 3.5
+    ) +
+    facet_wrap(~metric, scales = "free_y", ncol = 3) +
+    labs(title = "Comprehensive Community Indicators (GDP Scaled)", x = "Community", y = "Value") +
+    theme_minimal() +
+    theme(legend.position = "none")
+)
+dev.off()
+cat("\nPlots saved to ", find_plot_file("1_network_analysis.pdf"), "\n")
 

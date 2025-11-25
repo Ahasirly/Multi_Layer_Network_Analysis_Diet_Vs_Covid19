@@ -1,16 +1,13 @@
 # =============================================
-# Complete standalone script
+# Complete standalone script (Correct Order)
 # =============================================
 
 library(tidyverse)
 library(igraph)
 library(ggraph)
 
-# === Plot output setup ===
+# === Create plot directory ===
 dir.create("Plots", showWarnings = FALSE)
-plot_file <- file.path("Plots", "2_food_covid_networks.pdf")
-pdf(plot_file, width = 10, height = 8, onefile = TRUE)
-on.exit(dev.off(), add = TRUE)
 
 # === Load data ===
 data <- read.csv("data/Food_Supply_kcal_Data.csv", check.names = FALSE)
@@ -22,14 +19,14 @@ valid_food_cols <- c("Alcoholic Beverages","Animal Products","Animal fats","Aqua
                      "Spices","Starchy Roots","Stimulants","Sugar Crops","Sugar & Sweeteners",
                      "Treenuts","Vegetal Products","Vegetable Oils","Vegetables")
 
-infection_col <- "Confirmed"   # infection rate variable
-recovery_col <- "Recovered"    # recovery rate variable
+infection_col <- "Confirmed"
+recovery_col <- "Recovered"
 
 # === Compute correlations ===
 cor_matrix_inf <- sapply(valid_food_cols, function(col) cor(data[[col]], data[[infection_col]], use = "complete.obs"))
 cor_matrix_rec <- sapply(valid_food_cols, function(col) cor(data[[col]], data[[recovery_col]], use = "complete.obs"))
 
-# === Build edge tables (infection and recovery rates) ===
+# === Construct edge tables ===
 edges1 <- data.frame(
   from = valid_food_cols,
   to = "Infection_Rate",
@@ -44,18 +41,12 @@ edges2 <- data.frame(
   weight = abs(as.numeric(cor_matrix_rec))
 )
 
-# === Utility: clean edge attributes ===
+# === Utility to clean edges ===
 clean_edges <- function(edges, valid_food_cols) {
   edges %>%
     mutate(
-      from = as.character(from),
-      to   = as.character(to),
-      from = trimws(from),
-      to   = trimws(to),
-      from = gsub("[[:cntrl:]]", "", from),
-      to   = gsub("[[:cntrl:]]", "", to),
-      from = enc2utf8(from),
-      to   = enc2utf8(to),
+      from = trimws(enc2utf8(as.character(from))),
+      to   = trimws(enc2utf8(as.character(to))),
       Correlation = as.numeric(Correlation),
       weight = as.numeric(weight)
     )
@@ -67,10 +58,9 @@ edges2 <- clean_edges(edges2, valid_food_cols)
 # === Build node tables ===
 build_nodes <- function(edges, valid_food_cols) {
   vertices <- unique(c(edges$from, edges$to))
-  valid_food_cols_clean <- trimws(enc2utf8(as.character(valid_food_cols)))
   data.frame(
     name = vertices,
-    type = ifelse(vertices %in% valid_food_cols_clean, "Food", "Rate"),
+    type = ifelse(vertices %in% valid_food_cols, "Food", "Rate"),
     stringsAsFactors = FALSE
   )
 }
@@ -94,11 +84,15 @@ plot_network <- function(graph, title) {
     labs(title = title, color = "Node Type", edge_color = "Correlation")
 }
 
-# === Render plots ===
+# === Generate plots ===
 set.seed(42)
 p1 <- plot_network(g1, "Food vs Infection Rate (Network)")
 p2 <- plot_network(g2, "Food vs Recovery Rate (Network)")
 
-# === Display ===
+# === Display in RStudio ===
 print(p1)
 print(p2)
+
+# === Save to PDF ===
+ggsave("Plots/2_Food_vs_Infection.pdf", p1, width = 10, height = 8)
+ggsave("Plots/2_Food_vs_Recovery.pdf", p2, width = 10, height = 8)
